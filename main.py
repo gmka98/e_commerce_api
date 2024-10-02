@@ -1,16 +1,65 @@
-from fastapi import FastAPI, HTTPException, status
-from starlette.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, status, Depends
 from starlette.requests import  Request 
+from tortoise.contrib.fastapi import register_tortoise
+
+# Files
+from authentication import *
+from emails import *
+from models import *
+
+# authentication
+from fastapi.security import (OAuth2PasswordBearer, OAuth2PasswordRequestForm)
+
+# signals
 from tortoise.signals import post_save
 from typing import List, Optional, Type
-from models import *
-from authentication import (get_hashed_password, very_token)
 from tortoise import BaseDBAsyncClient
-from tortoise.contrib.fastapi import register_tortoise
-from emails import *
+
+# template
 from fastapi.templating import Jinja2Templates
 
+# response classes
+from starlette.responses import HTMLResponse
+
+
+
 app = FastAPI()
+
+oath2_scheme = OAuth2PasswordBearer(tokenUrl='token')
+
+@app.post('/token')
+async def generate_token(request_form: OAuth2PasswordRequestForm = Depends()):
+    token = await token_generator(request_form.username, request_form.password)
+    return {"access_token" : token, "token_type" : "bearer"}
+
+async def get_current_user(token: str = Depends(oath2_scheme)):
+    try:
+        payload = jwt.decode(token, config_credential["SECRET"], algorithms="HS256")
+        user = await User.get(id = payload.get("id"))
+    
+    except:
+         raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+            headers={"WWW_Authenticate" : "Bearer"}
+
+        )
+    return await user
+
+@app.post("/user/me")
+async def user_login(user: user_pydanticIn = Depends(get_current_user)):
+    business = await Business.get(owner = user)
+
+    return{
+        "status" : "ok",
+        "data" : {
+            "username" : user.username,
+            "email": user.email,
+            "verified": user.is_verified,
+            "join_date": user.join_date.strftime("%b %d %Y")
+        }
+    }
+ 
 
 @post_save(User)
 async def create_business(
