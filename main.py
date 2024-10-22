@@ -21,11 +21,22 @@ from fastapi.templating import Jinja2Templates
 # response classes
 from starlette.responses import HTMLResponse
 
+# images upload
+from fastapi import File, UploadFile
+import secrets
+from fastapi.staticfiles import StaticFiles
+from PIL import Image
+
 
 
 app = FastAPI()
 
+
 oath2_scheme = OAuth2PasswordBearer(tokenUrl='token')
+
+# static file setup config
+app.mount("/static", StaticFiles(directory="static"),  name="static")
+
 
 @app.post('/token')
 async def generate_token(request_form: OAuth2PasswordRequestForm = Depends()):
@@ -49,6 +60,8 @@ async def get_current_user(token: str = Depends(oath2_scheme)):
 @app.post("/user/me")
 async def user_login(user: user_pydanticIn = Depends(get_current_user)):
     business = await Business.get(owner = user)
+    logo = business.logo #
+    logo_path = "localhost:8000/static/images"+logo
 
     return{
         "status" : "ok",
@@ -56,7 +69,8 @@ async def user_login(user: user_pydanticIn = Depends(get_current_user)):
             "username" : user.username,
             "email": user.email,
             "verified": user.is_verified,
-            "join_date": user.join_date.strftime("%b %d %Y")
+            "join_date": user.join_date.strftime("%b %d %Y"),
+            "logo": logo_path
         }
     }
  
@@ -109,6 +123,185 @@ async def email_verification(request: Request, token: str):
 @app.get("/")
 def index():
     return{"Hello" : "World"}
+
+@app.post("/uploadfile/profile")
+async def create_upload_file(file: UploadFile = File(...), 
+                                user: user_pydantic = Depends(get_current_user)):
+
+
+    FILEPATH = "./static/images"
+    filename = file.filename
+    # test.png >> ["test","png"]
+    extension = filename.split(".")[1]
+
+
+    if extension not in ["png", "jpg"]:
+        return {"status" : "error", "detail" : "File extension not allowed"}
+    
+    # /static/images/u3u59jlkjl.png
+    token_name = secrets.token_hex(10)+"."+extension
+    generate_name = FILEPATH + token_name
+    file_content = await file.read()
+
+    with open(generate_name, "wb") as file:
+        file.write(file_content)
+
+
+    # PILLOW 
+    img = Image.open(generate_name)
+    img = img.resize(size= (200, 200))
+    img.save(generate_name)
+
+    file.close()
+
+    business = await Business.get(owner = user)
+    owner = await business.owner
+
+    if owner == user:
+        business.logo = token_name
+        await business.save()
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticate to perform this action",
+            headers={"WWW_Authenticate" : "Bearer"}
+
+        )
+    
+    file_url = "localhost:8000" + generate_name[1:]
+    return { "status" : "ok", "filename": file_url}
+
+   
+
+@app.post("/uploadfile/product/{id}")
+async def create_upload_file(id: int, file: UploadFile = File(...),
+                             user: user_pydantic = Depends(get_current_user)):
+    
+    FILEPATH = "./static/images"
+    filename = file.filename
+    # test.png >> ["test","png"]
+    extension = filename.split(".")[1]
+
+
+    if extension not in ["png", "jpg"]:
+        return {"status" : "error", "detail" : "File extension not allowed"}
+    
+    # /static/images/u3u59jlkjl.png
+    token_name = secrets.token_hex(10)+"."+extension
+    generate_name = FILEPATH + token_name
+    file_content = await file.read()
+
+    with open(generate_name, "wb") as file:
+        file.write(file_content)
+    
+    # /static/images/u3u59jlkjl.png
+    token_name = secrets.token_hex(10)+"."+extension
+    generate_name = FILEPATH + token_name
+    file_content = await file.read()
+
+    with open(generate_name, "wb") as file:
+        file.write(file_content)
+
+
+    # PILLOW 
+    img = Image.open(generate_name)
+    img = img.resize(size= (200, 200))
+    img.save(generate_name)
+
+    file.close()
+
+    product = await Product.get(id = id)
+    business = await product.business
+    owner = await business.owner
+
+    if owner == user:
+        product.product_image = token_name
+        await product.save()
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticate to perform this action",
+            headers={"WWW_Authenticate" : "Bearer"}
+
+        )
+    
+    file_url = "localhost:8000" + generate_name[1:]
+    return { "status" : "ok", "filename": file_url}
+
+    
+# CRUD function
+
+@app.post("/products")
+async def add_new_product(product: product_pydanticIn,
+                          user: user_pydantic = Depends(get_current_user)):
+    
+    product = product.dict(exclude_unset=True)
+
+    if product["original_price"] > 0:
+        product["percentage_discount"] = ((product["original_price"] - product
+        ["new_price"]) / product["original_price"]) * 100
+        
+        product_obj = await Product.create(**product, business = user)
+        product_obj = await product_pydantic.from_tortoise_orm(product_obj)
+
+        return {"status": "ok", "data": product_obj}
+    else:
+        return {"status": "error"}
+
+@app.get("/product")
+async def get_product():
+    response = await product_pydantic.from_queryset(Product.all())
+    return {"status": "ok", "data": response}
+
+
+@app.get("/product/{id}")
+async def get_product():
+    product = await Product.get(id = id)
+    business = await product.business
+    owner = await business.owner
+    response = await product_pydantic.from_queryset_single(Product.get(id = id))
+
+    return {
+        "status": "ok",
+        "data": {
+            "product_details" : response,
+            "business_details" : {
+            "name": business.business_name,
+            "city": business.city,
+            "region": business.region,
+            "description": business.description,
+            "logo": business.logo,
+            "owner_id": owner.id, 
+            "email": owner.email,
+            "join_date": owner.joid_date.strftime("%b %d %Y")
+            }
+        }
+    }
+
+@app.delete("/products/{id}")
+async def delete_product(id: int, user_pydantic = Depends(get_current_user)):
+    product = await Product.get(id = id)
+    business = await product.business
+    owner = await business.owner
+
+    if user == owner:
+        product.delete()
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticate to perform this action",
+            headers={"WWW_Authenticate" : "Bearer"}
+
+        )
+    return {"status" : "ok"}
+
+
+
+
+    
 
 register_tortoise(
     app,
