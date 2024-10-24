@@ -300,8 +300,58 @@ async def delete_product(id: int, user_pydantic = Depends(get_current_user)):
 
 
 
-
+@app.put("/product/{id}")
+async def update_product(id: int, 
+                         update_info: product_pydanticIn,
+                         user: user_pydantic = Depends(get_current_user)):
     
+    product = await Product.get(id = id)
+    business = await product.business
+    owner = await business.owner
+
+    update_info = update_info.dict(exclude_unset=True)
+    update_info["date_published"] = datetime.utcnow()
+
+
+    if user == owner and update_info["original_price"] > 0:
+        update_info["percentage_discount"] = ((update_info["original_price"] - 
+        update_info["new_price"]) / update_info["original_price"]) * 100
+        product = await product.update_from_dict(update_info)
+        await product.save()
+        response = await product_pydantic.from_tortoise_orm(product)
+        return {"status": "ok", "data": response}
+    
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticate to perform this action",
+            headers={"WWW_Authenticate" : "Bearer"}
+
+        )
+
+@app.put("/business/{id}")
+async def update_business(id: int,
+                          update_info: business_pydanticIn,
+                          user: user_pydantic = Depends(get_current_user)):
+    
+    update_business = update_business.dict()
+
+    business = await Business.get(id = id)
+    business_owner = await business_owner
+
+    if user == business_owner:
+        await business.update_from_dict(update_business)
+        business.save()
+        response = await business_pydantic.from_tortoise_orm(business)
+        return {"status": "ok", "data": response}
+    
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticate to perform this action",
+            headers={"WWW_Authenticate" : "Bearer"}
+
+        )
 
 register_tortoise(
     app,
